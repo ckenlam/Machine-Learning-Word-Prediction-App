@@ -1,0 +1,188 @@
+---
+title: "Data Science Capstone - Milestone Report"
+author: "Ken Lam"
+date: '2016-11-26'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+Around the world, people are spending an increasing amount of time on their mobile devices for email, social networking, banking and a whole range of other activities. But typing on mobile devices can be a serious pain. SwiftKey, our corporate partner in this capstone, builds a smart keyboard that makes it easier for people to type on their mobile devices. One cornerstone of their smart keyboard is predictive text
+models. When someone types:
+
+"I went to the"
+
+the keyboard presents three options for what the next word might be. For example, the three words might be gym, store, restaurant. The goal of this Coursera Data Science Capstone Project is to understand and build predictive text models like those used by SwiftKey.
+
+This milestone report details the process of data acquisition, sampling, cleaning, transformations and exploratory analysis of the training data.
+
+
+## Data Acquisition
+Before we start, we will load the libraries necessary for the project:
+```{r}
+library(tm)
+library(SnowballC)
+library(ggplot2)
+library(wordcloud2)
+library(stringi)
+library(stringr)
+
+```
+
+The following training data is the basis for most of the capstone. It is provided via the Coursera site.
+
+```{r}
+if(!file.exists("Coursera-SwiftKey.zip")){
+  download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", "Coursera-SwiftKey.zip")
+  unzip("Coursera-SwiftKey.zip")
+}
+```
+
+For the purpose of this project, we are only interested in the English datasets.
+
+```{r}
+#read all three files from the en_US folder
+news.data <- readLines("final/en_US/en_US.news.txt", encoding = "UTF-8", skipNul = TRUE)
+blogs.data <- readLines("final/en_US/en_US.blogs.txt", encoding = "UTF-8", skipNul = TRUE)
+twitter.data <- readLines("final/en_US/en_US.twitter.txt", encoding = "UTF-8", skipNul = TRUE) 
+```
+
+This is a basic summary of the 3 files:
+
+```{r}
+wordscnt_news<- stri_count_words(news.data)
+wordscnt_blogs<- stri_count_words(blogs.data)
+wordscnt_twitter<- stri_count_words(twitter.data)
+
+linecnt_news<- length(news.data)
+linecnt_blogs<- length(blogs.data)
+linecnt_twitter<- length(twitter.data)
+
+summary_table <- data.frame(filename= c("news", "blogs", "twitter"),
+                           words_count= c(sum(wordscnt_news), sum(wordscnt_blogs), sum(wordscnt_twitter)),
+                           line_count= c(linecnt_news,linecnt_blogs, linecnt_twitter))
+
+summary_table
+```
+
+
+
+## Data Sampling
+
+To build models we don't need to load and use all of the data. Often relatively few randomly selected rows or chunks need to be included to get an accurate approximation to results that would be obtained using all the data. For that reason, we will only sample 5% from each dataset and merge them into one master dataset.
+
+```{r}
+all.sample<- c( sample(news.data, length(news.data) *0.05), 
+                sample(blogs.data, length(blogs.data)*0,05),
+                sample(twitter.data, length(twitter.data)*0.05))
+```
+
+## Data Cleaning
+
+### Profanity filering
+
+The first task to be accomplished is profanity filtering, that is to remove profanity and other words we do not wish to predict. To do so, we will make use of a list of profanity vocabulary list provided at the following [link](http://www.frontgatemedia.com/a-list-of-723-bad-words-to-blacklist-and-how-to-use-facebooks-moderation-tool/). The list is to be saved as "profanity.csv" and used to clean the data in the next section.
+
+```{r}
+profanity_list<- read.csv("profanity.csv", header = FALSE,  stringsAsFactors=FALSE)
+profanity<- profanity_list$V1
+
+```
+
+### Tokenization
+
+We will now identify appropriate tokens such as words, punctuation, and numbers. During such process, we will also perform profanity filtering with the list of key words from the previous section.
+
+```{r}
+# This is a handy custom content transformer that is explained at the following website https://eight2late.wordpress.com/2015/05/27/a-gentle-introduction-to-text-mining-using-r/
+toSpace <- content_transformer(function(x, pattern) {return (gsub(pattern, " ", x))})
+
+#Create a corpus with the data
+sample.corpus<- VCorpus(VectorSource(all.sample))
+sample.corpus<- tm_map(sample.corpus, toSpace, "(f|ht)tp(s?)://(.*)[.][a-z]+")
+sample.corpus<- tm_map(sample.corpus, toSpace, "@[^\\s]+")
+sample.corpus<- tm_map(sample.corpus, removeNumbers)
+sample.corpus<- tm_map(sample.corpus, removePunctuation)
+sample.corpus<- tm_map(sample.corpus, tolower)
+sample.corpus<- tm_map(sample.corpus, removeWords, stopwords("english"))
+sample.corpus<- tm_map(sample.corpus, removeWords, profanity)
+sample.corpus<- tm_map(sample.corpus, stripWhitespace)
+sample.corpus2<- tm_map(sample.corpus, PlainTextDocument)
+```
+
+## Exploratory Analysis
+
+We will perform a thorough exploratory analysis of the data, understanding the distribution of words and relationship between the words in the corpora.
+
+```{r}
+# this custom function will return the word count of the input corpus
+getFreq <- function(input_data) {
+  freq <- sort(rowSums(as.matrix(input_data)), decreasing = TRUE)
+  return(data.frame(word = names(freq), freq = freq))
+}
+
+# this is the tokenizers for 2-grams and 3-grams
+
+BigramTokenizer  <- function(x) unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+
+TrigramTokenizer <- function(x) unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+
+# It's now time to generate the count each of the category
+unigram<- getFreq(removeSparseTerms(TermDocumentMatrix(sample.corpus2),0.9999))
+
+bigram <- getFreq(removeSparseTerms(TermDocumentMatrix(sample.corpus2, control = list(tokenize = BigramTokenizer)), 0.9999))
+
+trigram <- getFreq(removeSparseTerms(TermDocumentMatrix(sample.corpus2, control = list(tokenize = TrigramTokenizer)), 0.9999))
+
+```
+
+We shall now take a look at the top 20 most frequent unigrams of the dataset as well as its word-cloud
+
+```{r}
+uni_plot<-  ggplot(unigram[1:20,], aes(reorder(word, -freq), freq)) +
+            labs(x = "Word", y = "Count") +
+            theme(axis.text.x = element_text(angle = 90), plot.title =     element_text(hjust = 0.5)) +
+            geom_bar(stat = "identity") +
+            ggtitle("Top 20 Most Frequent Unigrams")
+
+uni_cloud<- wordcloud2(unigram, size = 0.5, color = "random-light")
+
+uni_cloud
+uni_plot
+```
+
+Similarly, let's have a look at the top 20 most frequent 2-grams of the dataset
+
+```{r}
+bi_plot<-  ggplot(bigram[1:20,], aes(reorder(word, -freq), freq)) +
+            labs(x = "Word", y = "Count") +
+            theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5)) +
+            geom_bar(stat = "identity") +
+            ggtitle("Top 20 Most Frequent 2-grams")
+
+bi_plot
+```
+
+Finally, this is the result for 3-grams
+
+```{r}
+tri_plot<-  ggplot(trigram[1:20,], aes(reorder(word, -freq), freq)) +
+            labs(x = "Word", y = "Count") +
+            theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5)) +
+            geom_bar(stat = "identity") +
+            ggtitle("Top 20 Most Frequent 3-grams")
+
+tri_plot
+```
+
+## Interesting Findings
+
+As you can see from the result, some of the most frequent 3-grams include broken expression such as "cant wait see" and "cant wait get". This is caused by the removal of the "stop words" from the dataset. This will inherently reduce the quality of the preditive cabability. There will be also a need to retain the punctuation such as apostrophes and hyphens in expression such as "let's" and "st-louis".
+
+## Next steps
+
+Before proceeding to build the first predictive text mining application, there is a need to further refine the Tokenization process. To keep the model efficient, we may exclude all n-grams with low frequency. The basic mechanism of the algorithm would be to provide a match of the highest n-gram and work its way down to lowest n-gram. Once the application is in service, it can be further enhanced by collecting unseen n-grams entered by users. 
